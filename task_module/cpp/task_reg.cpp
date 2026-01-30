@@ -21,6 +21,7 @@
 #include "apd_control.h"
 #include "task_reg.h"
 #include "uart.h"
+#include "buffer.h"
 
 static bool udpsend = true;
 static float computedistance = 0.0f;
@@ -45,6 +46,17 @@ static UdpSender udp_Sender(ip_address, udp_port);
 std::mutex g_stateMutex;
 std::condition_variable g_stateCV;
 std::atomic<bool> g_shutdown(false);
+
+// 推流环形缓冲区及同步原语
+constexpr size_t kPacketBufferSize = 5;
+
+LatestRingBuffer<UdpDataPacket, kPacketBufferSize> g_udpRing;
+std::mutex g_udpMutex;
+std::condition_variable g_udpCV;
+
+LatestRingBuffer<PcieDataPacket, kPacketBufferSize> g_pcieRing;
+std::mutex g_pcieMutex;
+std::condition_variable g_pcieCV;
 
 
 void start_threads()
@@ -78,7 +90,7 @@ static void wait_until_running()
 
 void update_delay(float distance)
 {
-    // 
+    // TODO 
     int timedelay = ComputeDelay(distance, 2, 1000); 
 
     Logger::instance().info(("update_setting - Computation started with distance: " + std::to_string(distance)).c_str());
@@ -106,96 +118,12 @@ void update_delay(float distance)
     return ;
 }
 
-// 发送数据结构定义
-enum class UdpPacketType {
-    RAW_BYTES,
-    POINT_CLOUD_PROCESS
-};
-
-struct UdpDataPacket {
-    UdpPacketType type = UdpPacketType::RAW_BYTES;
-
-    // RAW_BYTES payload
-    std::vector<uint8_t> data;
-
-    // POINT_CLOUD_PROCESS payload
-    std::vector<float> dist;
-    std::vector<uint16_t> inten;
-    std::vector<int32_t> raw; 
-    int rows;
-    int cols;
-};
-
-struct PcieDataPacket {
-    int channel;
-    std::vector<uint16_t> depth;     // 存储深度数据
-    std::vector<uint16_t> intensity; // 存储强度数据
-};
-
-template <typename T, size_t Capacity>
-class LatestRingBuffer {
-public:
-    void push(const T& item) {
-        m_buffer[m_writeIndex] = item;
-        advance();
-    }
-
-    void push(T&& item) {
-        m_buffer[m_writeIndex] = std::move(item);
-        advance();
-    }
-
-    bool popLatest(T& out) {
-        if (m_count == 0) {
-            return false;
-        }
-        const size_t latestIndex = (m_writeIndex + Capacity - 1) % Capacity;
-        out = m_buffer[latestIndex];
-        m_count = 0;
-        return true;
-    }
-
-    bool hasData() const {
-        return m_count > 0;
-    }
-
-private:
-    void advance() {
-        m_writeIndex = (m_writeIndex + 1) % Capacity;
-        if (m_count < Capacity) {
-            ++m_count;
-        }
-    }
-
-    std::array<T, Capacity> m_buffer{};
-    size_t m_writeIndex = 0;
-    size_t m_count = 0;
-};
-
-constexpr size_t kPacketBufferSize = 5;
-
-LatestRingBuffer<UdpDataPacket, kPacketBufferSize> g_udpRing;
-std::mutex g_udpMutex;
-std::condition_variable g_udpCV;
-
-LatestRingBuffer<PcieDataPacket, kPacketBufferSize> g_pcieRing;
-std::mutex g_pcieMutex;
-std::condition_variable g_pcieCV;
-
 // 待实现的接口: 定时更新成像参数
 void UpdateImagingParametersInterface() {
-    // 只有在数据有更新时才重新计算
-    // if (g_sharedData.dataUpdated) 
+    // TODO 根据snr及距离更新成像参数
+    if (g_sharedData.dataUpdated) 
     {
-        float currentDist = g_sharedData.distance;
-        float currentSnr = g_sharedData.snr;
-        
-        // TODO: 根据距离和信噪比及其他信息(如直方图分布)更新成像参数
-        // 示例规则: 
-        // if (currentSnr < 5.0) { IncreaseExposure(); }
-        
-        // 目前保持原有逻辑
-        update_delay(currentDist);
+        return;
     }
 }
 
@@ -208,11 +136,9 @@ void thread_UpdateParams() {
             break;
         }
 
-        // 执行参数更新逻辑
         UpdateImagingParametersInterface();
         
-        // 控制更新频率，例如 100ms
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
     Logger::instance().info("Thread ParamUpdate - Stopped");
 }
@@ -227,7 +153,7 @@ void thread_UdpSend() {
         }
 
         std::unique_lock<std::mutex> lock(g_udpMutex);
-        // 等待有数据或者停止信号
+
         if (!g_udpRing.hasData()) {
             g_udpCV.wait_for(lock, std::chrono::milliseconds(100), [&]{
                 return g_udpRing.hasData() || g_shutdown.load() || g_stopThreads.load();
@@ -441,7 +367,7 @@ void thread_Communication()
                 Logger::instance().debug(("Thread_Communication - Pitch: " + std::to_string(g_motionData.pitch)).c_str());
                 Logger::instance().debug(("Thread_Communication - Yaw: " + std::to_string(g_motionData.yaw)).c_str());
                 
-                update_setting(g_motionData.distance);
+                update_delay(g_motionData.distance);
             }
             else if (cmdType == UartCmdType::APD_Timing_START) // APD时序启动指令
             {
@@ -541,7 +467,7 @@ void thread_ComputeDistance()
 
             if (!hasNewData)
             {
-                continue; // 没有新数据，跳过处理 
+                continue; 
             }
           
             cv::Mat MatToProcess(128, 128, CV_16UC1, memBuffer.data());
@@ -549,7 +475,7 @@ void thread_ComputeDistance()
             if (!MatToProcess.empty())
             {
                 // 计算直方图并获取结果
-                HistogramResult result = ComputeHistogram(MatToProcess, 10, 4000);
+                HistogramResult result = ComputeHistogram(MatToProcess, 1000, 50000);
                 computedistance = result.maxPixelValue / 10.0f;
 
                 g_sharedData.distance = computedistance;
@@ -699,6 +625,7 @@ void register_threads()
     Logger::instance().info("Registering and starting threads");
 
     ApdControl(1, 2000, 40, 19600, 200, 0, 3200, 1, 3, 1600);
+    
     Logger::instance().info("APD control initialized");
 
     int version = GetFpgaVersion();

@@ -211,16 +211,6 @@ void PointCloudProcess(
 
     float* distanceMatrix = TimeToDistance(time_matrix, rows, cols, timedelay);
 
-    // 转台测试
-    // FillBadRowsAndCols(distanceMatrix, rows, cols);
-    // FillBadRowsAndCols(intensity_matrix, rows, cols);
-
-    // FillSmallHoles(distanceMatrix, distanceMatrix, rows, cols, 64);
-    // FillSmallHoles(intensity_matrix, intensity_matrix, rows, cols, 64);
-
-    // memcpy(denoised_distance, distanceMatrix, rows * cols * sizeof(float));
-    // memcpy(denoised_intensity, intensity_matrix, rows * cols * sizeof(uint16_t));
-
     // 正常降噪
     const double dbscan_eps = 3;
     const int dbscan_min_points = 10;
@@ -230,8 +220,8 @@ void PointCloudProcess(
                                 dbscan_eps, dbscan_min_points,
                                 denoised_distance, denoised_intensity, duration_ms);
 
-    fillHolesDilate<float>(denoised_distance, denoised_distance, rows, cols, 5);
-    fillHolesDilate<uint16_t>(denoised_intensity, denoised_intensity, rows, cols, 5);
+    FillHolesDilate<float>(denoised_distance, denoised_distance, rows, cols, 5);
+    FillHolesDilate<uint16_t>(denoised_intensity, denoised_intensity, rows, cols, 5);
         
     delete[] time_matrix;
     delete[] intensity_matrix;

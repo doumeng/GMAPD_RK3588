@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <vector>
@@ -47,11 +48,13 @@ void ProcessAndDenoisePointCloud(
     long long &duration_ms);
 
 template <typename T>
-void FillSmallHolesWithOpenCV(const T *src, 
-    T *dst, 
+template<typename T>
+void FillHolesDilate(
+    const T* src, 
+    T* dst, 
     int rows, 
     int cols, 
-    int max_hole_area);
+    int kernal_size);
 
 // 点云处理主函数
 void PointCloudProcess(

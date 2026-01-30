@@ -1,3 +1,11 @@
+/*
+ * @Author: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
+ * @Date: 2026-01-27 09:00:23
+ * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
+ * @LastEditTime: 2026-01-27 09:09:06
+ * @FilePath: /GMAPD_RK3588/task_module/header/udp_send.h
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -27,43 +35,6 @@ struct UdpFrame {
     uint8_t  checksum;       // XOR of all bytes from header to data
     uint16_t tail;           // 0x55AA
 } __attribute__((packed));
-
-struct UdpPacket {
-    std::vector<uint8_t> data;
-};
-
-struct PciePacket {
-    std::vector<uint16_t> dist;
-    std::vector<uint16_t> intensity;
-};
-template<typename T>
-class ThreadSafeQueue {
-public:
-    void push(const T& value) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        queue_.push(value);
-        cv_.notify_one();
-    }
-    bool pop(T& value) {
-        std::unique_lock<std::mutex> lock(mtx_);
-        cv_.wait(lock, [this]{ return !queue_.empty(); });
-        value = queue_.front();
-        queue_.pop();
-        return true;
-    }
-    bool try_pop(T& value) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (queue_.empty()) return false;
-        value = queue_.front();
-        queue_.pop();
-        return true;
-    }
-private:
-    std::queue<T> queue_;
-    std::mutex mtx_;
-    std::condition_variable cv_;
-};
-
 
 class UdpSender {
 public:

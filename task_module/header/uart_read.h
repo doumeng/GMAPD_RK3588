@@ -2,7 +2,7 @@
  * @Author: doumeng
  * @Date: 2025-05-30 19:52:42
  * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2026-01-26 16:00:08
+ * @LastEditTime: 2026-01-27 13:01:13
  * @FilePath: uart_read.h
  * @Description: 读取串口信息并解析至对应的结构体
 */
@@ -69,10 +69,6 @@ struct MotionData
     float roll = 0.0f;                                 // 横滚角(度)
     float pitch = 0.0f;                                // 俯仰角(度)
     float yaw = 0.0f;                                  // 偏航角(度)
-};
-
-struct EnvConfig{
-    float snr = 10.0f;                                   // 信噪比
 };
 
 UartCmdType parseUartCommand(
