@@ -37,13 +37,13 @@ HistogramResult ComputeHistogram(const cv::Mat& image, int startValue, int endVa
     double maxValue;
     cv::minMaxLoc(hist, nullptr, &maxValue, nullptr, &maxLoc);
 
-    // 计算非零像素占比，来近似得到信噪比
-    double totalPixels = cv::countNonZero(image);
-    double signalPixels = maxValue;
-    float snr = (totalPixels > 0) ? static_cast<float>(signalPixels / totalPixels) : 0.0f;
+    // 计算非零像素占比，作为场景稀疏度指标
+    double nonZeroPixels = cv::countNonZero(image);
+    double totalPixels = static_cast<double>(image.total());
+    float occupancyRatio = (totalPixels > 0) ? static_cast<float>(nonZeroPixels / totalPixels) : 0.0f;
 
     // maxLoc.y 对应的是 bin 索引，实际像素值为 bin + startValue
-    return {maxLoc.y + startValue, static_cast<int>(maxValue), snr};
+    return {maxLoc.y + startValue, static_cast<int>(maxValue), occupancyRatio};
 }
 
 // 根据距离，计算需要的延迟时间

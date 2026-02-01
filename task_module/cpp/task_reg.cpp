@@ -10,6 +10,9 @@
 #include <thread>
 #include <shared_mutex>
 #include <utility>
+#include <algorithm>
+#include <sstream>
+#include <string>
 
 #include "log.h"
 #include "compute_distance.h"
@@ -23,6 +26,238 @@
 #include "uart.h"
 #include "buffer.h"
 
+namespace
+{
+constexpr size_t kDistanceBinCount = 7;
+constexpr size_t kSparsityLevelCount = 5;
+constexpr float kDistanceBinSizeMeters = 500.0f;
+constexpr float kMaxDistanceMeters = 3000.0f;
+constexpr float kSparsityStep = 0.2f;
+constexpr const char *kImagingParamCsvPath = "/userdata/data/imaging_params.csv";
+
+struct DistanceProfile
+{
+    int tofFrameCount;
+    int reconstructionStride;
+    float reconstructionThreshold;
+    double dbscanEps;
+    int dbscanMinSamples;
+    int kernelSize;
+};
+
+struct SparsityProfile
+{
+    int tofFrameDelta;
+    int strideDelta;
+    float thresholdDelta;
+    double epsDelta;
+    int minSampleDelta;
+    int kernelDelta;
+};
+
+using ImagingParamLUT = std::array<std::array<ImagingAlgorithmParams, kSparsityLevelCount>, kDistanceBinCount>;
+
+std::string Trim(const std::string &input)
+{
+    const auto start = input.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos)
+    {
+        return "";
+    }
+    const auto end = input.find_last_not_of(" \t\r\n");
+    return input.substr(start, end - start + 1);
+}
+
+bool ParseCsvRow(const std::string &line,
+                 size_t &distanceIdx,
+                 size_t &sparsityIdx,
+                 ImagingAlgorithmParams &params)
+{
+    std::stringstream ss(line);
+    std::string token;
+    std::vector<std::string> tokens;
+    while (std::getline(ss, token, ','))
+    {
+        tokens.push_back(Trim(token));
+    }
+
+    if (tokens.size() < 7)
+    {
+        return false;
+    }
+
+    try
+    {
+        distanceIdx = static_cast<size_t>(std::stoi(tokens[0]));
+        sparsityIdx = static_cast<size_t>(std::stoi(tokens[1]));
+        params.tofFrameCount = std::stoi(tokens[2]);
+        params.reconstructionStride = std::stoi(tokens[3]);
+        params.reconstructionThreshold = std::stof(tokens[4]);
+        params.dbscanEps = std::stod(tokens[5]);
+        params.dbscanMinSamples = std::stoi(tokens[6]);
+        if (tokens.size() > 7)
+        {
+            params.completionKernelSize = std::stoi(tokens[7]);
+        }
+    }
+    catch (const std::exception &ex)
+    {
+        Logger::instance().error(("ParseCsvRow - invalid value, line: " + line + ", reason: " + ex.what()).c_str());
+        return false;
+    }
+
+    params.tofFrameCount = std::clamp(params.tofFrameCount, 16, 256);
+    params.reconstructionStride = std::clamp(params.reconstructionStride, 1, 4);
+    params.reconstructionThreshold = std::clamp(params.reconstructionThreshold, 0.0f, 1000.0f);
+    params.dbscanEps = std::max(0.1, params.dbscanEps);
+    params.dbscanMinSamples = std::clamp(params.dbscanMinSamples, 1, 128);
+    if (params.completionKernelSize <= 0)
+    {
+        params.completionKernelSize = 3;
+    }
+    if ((params.completionKernelSize % 2) == 0)
+    {
+        ++params.completionKernelSize;
+    }
+    params.completionKernelSize = std::clamp(params.completionKernelSize, 3, 15);
+
+    return true;
+}
+
+bool LoadImagingParamLutFromCsv(const std::string &csvPath, ImagingParamLUT &lut)
+{
+    std::ifstream file(csvPath);
+    if (!file.is_open())
+    {
+        Logger::instance().info(("LoadImagingParamLutFromCsv - unable to open " + csvPath).c_str());
+        return false;
+    }
+
+    size_t populated = 0;
+    std::string line;
+    while (std::getline(file, line))
+    {
+        std::string trimmed = Trim(line);
+        if (trimmed.empty() || trimmed[0] == '#')
+        {
+            continue;
+        }
+
+        size_t distanceIdx = 0;
+        size_t sparsityIdx = 0;
+        ImagingAlgorithmParams parsedParams;
+        if (!ParseCsvRow(trimmed, distanceIdx, sparsityIdx, parsedParams))
+        {
+            Logger::instance().debug(("LoadImagingParamLutFromCsv - skip line: " + trimmed).c_str());
+            continue;
+        }
+
+        if (distanceIdx >= kDistanceBinCount || sparsityIdx >= kSparsityLevelCount)
+        {
+            Logger::instance().debug(("LoadImagingParamLutFromCsv - index out of range: " + trimmed).c_str());
+            continue;
+        }
+
+        lut[distanceIdx][sparsityIdx] = parsedParams;
+        ++populated;
+    }
+
+    Logger::instance().info(("LoadImagingParamLutFromCsv - populated entries: " + std::to_string(populated)).c_str());
+    return populated > 0;
+}
+
+constexpr std::array<DistanceProfile, kDistanceBinCount> kDistanceProfiles = {{
+    {32, 1, 80.0f, 2.0, 8, 3},
+    {48, 1, 110.0f, 2.2, 10, 3},
+    {64, 2, 140.0f, 2.6, 12, 3},
+    {80, 2, 170.0f, 3.0, 14, 5},
+    {96, 2, 200.0f, 3.4, 16, 5},
+    {120, 3, 230.0f, 3.8, 18, 7},
+    {150, 3, 260.0f, 4.2, 20, 7},
+}};
+
+constexpr std::array<SparsityProfile, kSparsityLevelCount> kSparsityProfiles = {{
+    {40, 1, 40.0f, 0.8, -2, 2},
+    {20, 1, 20.0f, 0.5, -1, 1},
+    {0, 0, 0.0f, 0.0, 0, 0},
+    {-10, 0, -15.0f, -0.2, 1, 0},
+    {-20, -1, -30.0f, -0.4, 2, -2},
+}};
+
+ImagingAlgorithmParams ComposeParams(const DistanceProfile &distanceProfile,
+                                     const SparsityProfile &sparsityProfile)
+{
+    ImagingAlgorithmParams params;
+    params.tofFrameCount = std::clamp(distanceProfile.tofFrameCount + sparsityProfile.tofFrameDelta, 16, 256);
+    params.reconstructionStride = std::clamp(distanceProfile.reconstructionStride + sparsityProfile.strideDelta, 1, 4);
+    params.reconstructionThreshold = std::clamp(distanceProfile.reconstructionThreshold + sparsityProfile.thresholdDelta, 50.0f, 400.0f);
+    params.dbscanEps = std::max(0.5, distanceProfile.dbscanEps + sparsityProfile.epsDelta);
+    params.dbscanMinSamples = std::clamp(distanceProfile.dbscanMinSamples + sparsityProfile.minSampleDelta, 3, 64);
+    int kernel = std::clamp(distanceProfile.kernelSize + sparsityProfile.kernelDelta, 3, 9);
+    if ((kernel % 2) == 0)
+    {
+        ++kernel;
+    }
+    params.completionKernelSize = kernel;
+    return params;
+}
+
+ImagingParamLUT BuildImagingParamLut()
+{
+    ImagingParamLUT lut{};
+    for (size_t d = 0; d < kDistanceBinCount; ++d)
+    {
+        for (size_t s = 0; s < kSparsityLevelCount; ++s)
+        {
+            lut[d][s] = ComposeParams(kDistanceProfiles[d], kSparsityProfiles[s]);
+        }
+    }
+    if (!LoadImagingParamLutFromCsv(kImagingParamCsvPath, lut))
+    {
+        Logger::instance().info("BuildImagingParamLut - falling back to baked-in LUT");
+    }
+    return lut;
+}
+
+const ImagingParamLUT &ImagingParamLut()
+{
+    static const ImagingParamLUT lut = BuildImagingParamLut();
+    return lut;
+}
+
+ImagingAlgorithmParams MakeDefaultImagingParams()
+{
+    return ImagingParamLut()[0][kSparsityLevelCount - 1];
+}
+
+size_t ResolveDistanceIndex(float distance)
+{
+    if (distance < 0.0f)
+    {
+        distance = 0.0f;
+    }
+    if (distance >= kMaxDistanceMeters)
+    {
+        return kDistanceBinCount - 1;
+    }
+    return static_cast<size_t>(distance / kDistanceBinSizeMeters);
+}
+
+size_t ResolveSparsityIndex(float occupancyRatio)
+{
+    if (occupancyRatio < 0.0f)
+    {
+        occupancyRatio = 0.0f;
+    }
+    if (occupancyRatio >= 1.0f)
+    {
+        return kSparsityLevelCount - 1;
+    }
+    return static_cast<size_t>(occupancyRatio / kSparsityStep);
+}
+
+} // namespace
+
 static bool udpsend = true;
 static float computedistance = 0.0f;
 static std::atomic<int> idx(0);
@@ -30,6 +265,9 @@ static std::atomic<int> idx(0);
 // 全局变量定义
 SharedData g_sharedData;
 SharedMat g_sharedMat;
+
+ImagingAlgorithmParams g_imagingParams = MakeDefaultImagingParams();
+std::mutex g_imagingParamMutex;
 
 SystemConfig g_sysConfig;
 MotionData g_motionData;
@@ -103,7 +341,6 @@ void update_delay(float distance)
         g_sharedData.timedelay = timedelay * 2;
         g_sharedData.distance = g_motionData.distance;
         g_sharedData.velocity = g_motionData.velocity;
-        g_sharedData.dataUpdated = true;
     }
 
     if (en_status > 0 && rec_status > 0)
@@ -118,13 +355,34 @@ void update_delay(float distance)
     return ;
 }
 
-// 待实现的接口: 定时更新成像参数
-void UpdateImagingParametersInterface() {
-    // TODO 根据snr及距离更新成像参数
-    if (g_sharedData.dataUpdated) 
+// 成像参数根据离线 LUT 进行 O(1) 查询
+void UpdateImagingParametersInterface()
+{
+    if (!g_sharedData.dataUpdated)
     {
         return;
     }
+
+    const float currentDistance = g_sharedData.distance;
+    const float occupancyRatio = g_sharedData.occupancyRatio;
+
+    const size_t distanceIdx = ResolveDistanceIndex(currentDistance);
+    const size_t sparsityIdx = ResolveSparsityIndex(occupancyRatio);
+    const ImagingAlgorithmParams paramsFromLut = ImagingParamLut()[distanceIdx][sparsityIdx];
+
+    {
+        std::lock_guard<std::mutex> lock(g_imagingParamMutex);
+        g_imagingParams = paramsFromLut;
+    }
+
+    g_sharedData.dataUpdated = false;
+
+    Logger::instance().info(("UpdateImagingParametersInterface - distanceIdx: " + std::to_string(distanceIdx) +
+                             ", sparsityIdx: " + std::to_string(sparsityIdx) +
+                             ", frames: " + std::to_string(paramsFromLut.tofFrameCount) +
+                             ", stride: " + std::to_string(paramsFromLut.reconstructionStride) +
+                             ", eps: " + std::to_string(paramsFromLut.dbscanEps) +
+                             ", kernel: " + std::to_string(paramsFromLut.completionKernelSize)).c_str());
 }
 
 // 线程：定时更新参数
@@ -403,7 +661,8 @@ void thread_ComputeDistance()
 {
     constexpr auto kComputeInterval = std::chrono::milliseconds(50); // 模拟1秒读取一次
 
-    u_char *src = new u_char[200 * 16384 * 2];
+    constexpr size_t kMaxTofFrameCount = 256;
+    u_char *src = new u_char[kMaxTofFrameCount * 16384 * 2];
     int chl = 0;
     std::vector<uint16_t> memBuffer(128 * 128);
 
@@ -422,8 +681,15 @@ void thread_ComputeDistance()
         if (g_sysConfig.workMode == WorkMode::TEST)
         {
             chl = 0;
+            int tofFrameCount = 200;
+            {
+                std::lock_guard<std::mutex> lock(g_imagingParamMutex);
+                tofFrameCount = g_imagingParams.tofFrameCount;
+            }
+            tofFrameCount = std::clamp(tofFrameCount, 1, static_cast<int>(kMaxTofFrameCount));
+
             // 测试模式，工作在通道0，输出原始数据
-            int status = PcieRead(0, src, 200);
+            int status = PcieRead(0, src, tofFrameCount);
 
             double dataFrequency = get_data_frequency(0);
 
@@ -434,7 +700,8 @@ void thread_ComputeDistance()
             }
             else
             {
-                Logger::instance().info(("Thread ComputeDistance - Successfully read raw data from PCIe, data length: " + std::to_string(status)).c_str());
+                Logger::instance().info(("Thread ComputeDistance - Successfully read raw data from PCIe, data length: " + std::to_string(status) +
+                                         ", frames: " + std::to_string(tofFrameCount)).c_str());
                 Logger::instance().info(("Thread ComputeDistance - Tof data frequency: " + std::to_string(dataFrequency)).c_str());
 
                 {
@@ -479,9 +746,10 @@ void thread_ComputeDistance()
                 computedistance = result.maxPixelValue / 10.0f;
 
                 g_sharedData.distance = computedistance;
-                g_sharedData.snr = result.snr;
+                g_sharedData.occupancyRatio = result.occupancyRatio;
                 g_sharedData.dataUpdated = true;
-                Logger::instance().info(("Thread ComputeDistance - Received new matrix, compute new distance:"+ std::to_string(computedistance) + " SNR:" + std::to_string(result.snr)).c_str());
+                Logger::instance().info(("Thread ComputeDistance - Distance: " + std::to_string(computedistance) +
+                                         " m, occupancy: " + std::to_string(result.occupancyRatio)).c_str());
             }
         }
 

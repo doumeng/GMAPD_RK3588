@@ -34,6 +34,8 @@ float *TimeToDistance(
 void DistanceToPointcloud(
     float *distance_matrix,
     int rows, int cols,
+    int stride,
+    float minDistance,
     std::vector<Eigen::Vector3d> &points);
 
 // 合并点云转换和降噪，返回降噪后的距离和强度矩阵
@@ -41,6 +43,8 @@ void ProcessAndDenoisePointCloud(
     float *distance_matrix,
     uint16_t *intensity_matrix,
     int rows, int cols,
+    int stride,
+    float min_valid_distance,
     double eps,
     int min_points,
     float *denoised_distance,
@@ -48,7 +52,6 @@ void ProcessAndDenoisePointCloud(
     long long &duration_ms);
 
 template <typename T>
-template<typename T>
 void FillHolesDilate(
     const T* src, 
     T* dst, 

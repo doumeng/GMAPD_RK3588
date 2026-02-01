@@ -36,14 +36,6 @@ int ApdGatherEn(int gather_en)
     return fpga_ctl_write(APD_GATHER_EN_ADDR, gather_en);
 }
 
-int ApdGatherEnStatus(){
-    return fpga_ctl_read(APD_GATHER_EN_ADDR);
-}
-
-int GetFpgaVersion(){
-    return fpga_ctl_read(0x000C);
-}
-
 
 // 片内变量 00000
 int PcieChlCtrl(int chl)
@@ -55,7 +47,7 @@ int PcieChlCtrl(int chl)
         return -1; // 无效通道
     }
     // 通过FPGA控制寄存器设置通道
-    return fpga_ctl_write(0x1020, chl);
+    return fpga_ctl_write(PCIE_CHL_CTRL_ADDR, chl);
 }
 
 int EnDelayCtrl(int delay)
@@ -65,12 +57,7 @@ int EnDelayCtrl(int delay)
     {
         return -1; // 无效延迟值
     }
-    return fpga_ctl_write(0x10018, delay);
-}
-
-int GetEnDelay()
-{
-    return fpga_ctl_read(0x10018);
+    return fpga_ctl_write(APD_EN_DELAY_ADDR, delay);
 }
 
 int RecDelayCtrl(int delay)
@@ -80,12 +67,7 @@ int RecDelayCtrl(int delay)
     {
         return -1; // 无效延迟值
     }
-    return fpga_ctl_write(0x10020, delay);
-}
-
-int GetRecDelay()
-{
-    return fpga_ctl_read(0x10020);
+    return fpga_ctl_write(APD_REC_DELAY_ADDR, delay);
 }
 
 int CycleCtrl(int cycle)
@@ -94,7 +76,7 @@ int CycleCtrl(int cycle)
     {
         return -1; // 无效延迟值
     }
-    return fpga_ctl_write(0x10030, cycle);
+    return fpga_ctl_write(APD_CYCLE_CTRL_ADDR, cycle);
 }
 
 int TriggerModeCtrl(int mode)
@@ -104,7 +86,7 @@ int TriggerModeCtrl(int mode)
     {
         return -1; // 无效触发模式
     }
-    return fpga_ctl_write(0x10034, mode);
+    return fpga_ctl_write(APD_TRIGGER_MODE_ADDR, mode);
 }
 
 int DiffThreholdCtrl(int threhold)
@@ -114,12 +96,7 @@ int DiffThreholdCtrl(int threhold)
     {
         return -1; // 无效触发模式
     }
-    return fpga_ctl_write(0x10100, threhold);
-}
-
-int GetDiffThrehold()
-{
-    return fpga_ctl_read(0x10100);
+    return fpga_ctl_write(APD_DIFF_THREHOLD_ADDR, threhold);
 }
 
 int StrideLengthCtrl(int length)
@@ -129,38 +106,48 @@ int StrideLengthCtrl(int length)
     {
         return -1; // 无效触发模式
     }
-    return fpga_ctl_write(0x10104, length);
+    return fpga_ctl_write(APD_STRIDE_LENGTH_ADDR, length);
+}
+
+int ApdConstructFrameCtrl(int buffer_num)
+{
+    // APD构建帧使能控制接口，buffer_num为1表示使能，0表示禁用
+    if (buffer_num < 0)
+    {
+        return -1; // 无效参数
+    }
+    return fpga_ctl_write(APD_CONSTRUCT_FRAMES_ADDR, buffer_num);
+}
+
+int GetFpgaVersion(){
+    return fpga_ctl_read(FPGA_VERSION_ADDR);
+}
+
+int ApdGatherEnStatus(){
+    return fpga_ctl_read(APD_GATHER_EN_ADDR);
+}
+
+int GetEnDelay()
+{
+    return fpga_ctl_read(APD_EN_DELAY_ADDR);
+}
+
+int GetRecDelay()
+{
+    return fpga_ctl_read(APD_REC_DELAY_ADDR);
+}
+
+int GetDiffThrehold()
+{
+    return fpga_ctl_read(APD_DIFF_THREHOLD_ADDR);
 }
 
 int GetStrideLength()
 {
-    return fpga_ctl_read(0x10104);
+    return fpga_ctl_read(APD_STRIDE_LENGTH_ADDR);
 }
 
-int GateControl(int gate)
+int GetApdConstructFrameNumber()
 {
-    if (gate < 0 || gate > 8000)
-    {
-        return -1; // 无效触发模式
-    }
-
-    int end_gate = gate + 1200;
-
-    if (end_gate < 0 || end_gate > 8000)
-    {
-        return -1; // 无效触发模式
-    }
-
-    fpga_ctl_write(0x10108, gate);
-    fpga_ctl_write(0x1010C, end_gate);
-    
-    return 0;
-}
-
-int GetStartGate(){
-    return fpga_ctl_read(0x10108);
-}
-
-int GetEndGate(){
-    return fpga_ctl_read(0x1010C);
+    return fpga_ctl_read(APD_CONSTRUCT_FRAMES_ADDR);
 }

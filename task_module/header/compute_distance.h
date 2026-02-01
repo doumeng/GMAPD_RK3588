@@ -16,7 +16,7 @@
 struct HistogramResult {
     int maxPixelValue;  // 出现频数最高的像素值
     int maxFrequency;   // 该像素值出现的次数
-    float snr;          // 信噪比
+    float occupancyRatio; // 非零像元比例
 };
 
 HistogramResult ComputeHistogram(

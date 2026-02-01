@@ -4,9 +4,11 @@
 #include <string>
 #include <algorithm>
 #include <chrono>
+#include <mutex>
 #include "user_api.hpp"
 #include <opencv2/opencv.hpp>
 #include "util.h"
+#include "task_reg.h"
 
 #include <Eigen/Core>
 #include <open3d/Open3D.h>
@@ -75,7 +77,7 @@ float* TimeToDistance(
 }
 
 // 距离矩阵转点云
-void DistanceToPointcloud(float* distance_matrix, int rows, int cols, std::vector<Eigen::Vector3d> &points)
+void DistanceToPointcloud(float* distance_matrix, int rows, int cols, int stride, float minDistance, std::vector<Eigen::Vector3d> &points)
 {
     Logger::instance().debug("Converting distance matrix to point cloud");
 
@@ -83,12 +85,14 @@ void DistanceToPointcloud(float* distance_matrix, int rows, int cols, std::vecto
         Logger::instance().error("Empty input matrix in DistanceToPointcloud");
     }
 
-    points.reserve(rows * cols);
+    const int effectiveStride = std::max(1, stride);
+    const float minDistanceClamped = std::max(0.0f, minDistance);
+    points.reserve((rows / effectiveStride + 1) * (cols / effectiveStride + 1));
 
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
+    for (int i = 0; i < rows; i += effectiveStride) {
+        for (int j = 0; j < cols; j += effectiveStride) {
             float distance = distance_matrix[i * cols + j];
-            if (distance > 0) {
+            if (distance > minDistanceClamped) {
                 points.emplace_back(Eigen::Vector3d(i, j, distance));
             }
         }
@@ -119,6 +123,8 @@ void ProcessAndDenoisePointCloud(
     float* distance_matrix,
     uint16_t* intensity_matrix,
     int rows, int cols,
+    int stride,
+    float min_valid_distance,
     double eps,
     int min_points,
     float* denoised_distance,
@@ -127,10 +133,12 @@ void ProcessAndDenoisePointCloud(
 {
     auto start = std::chrono::high_resolution_clock::now();
     Logger::instance().debug("Starting ProcessAndDenoisePointCloud");
+    Logger::instance().debug(("ProcessAndDenoisePointCloud - stride: " + std::to_string(stride) +
+                              ", min distance: " + std::to_string(min_valid_distance)).c_str());
 
     // 仅使用距离信息转换点云
     std::vector<Eigen::Vector3d> points;
-    DistanceToPointcloud(distance_matrix, rows, cols, points);
+    DistanceToPointcloud(distance_matrix, rows, cols, stride, min_valid_distance, points);
 
     // 创建点云对象
     auto cloud = std::make_shared<geometry::PointCloud>();
@@ -203,6 +211,22 @@ void PointCloudProcess(
     int rows = pcieMat.rows;
     int cols = pcieMat.cols;
 
+    ImagingAlgorithmParams paramsSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(g_imagingParamMutex);
+        paramsSnapshot = g_imagingParams;
+    }
+    const double dbscan_eps = paramsSnapshot.dbscanEps;
+    const int dbscan_min_points = paramsSnapshot.dbscanMinSamples;
+    const int reconstructionStride = paramsSnapshot.reconstructionStride;
+    const float minValidDistance = paramsSnapshot.reconstructionThreshold;
+    const int completionKernelSize = paramsSnapshot.completionKernelSize;
+    Logger::instance().debug(("PointCloudProcess - eps: " + std::to_string(dbscan_eps) +
+                              ", minPts: " + std::to_string(dbscan_min_points) +
+                              ", stride: " + std::to_string(reconstructionStride) +
+                              ", minDistance: " + std::to_string(minValidDistance) +
+                              ", kernel: " + std::to_string(completionKernelSize)).c_str());
+
     // 分配二维数组
     uint16_t* time_matrix = createUint16Matrix(rows, cols);
     uint16_t* intensity_matrix = createUint16Matrix(rows, cols);
@@ -212,16 +236,15 @@ void PointCloudProcess(
     float* distanceMatrix = TimeToDistance(time_matrix, rows, cols, timedelay);
 
     // 正常降噪
-    const double dbscan_eps = 3;
-    const int dbscan_min_points = 10;
     long long duration_ms = 0;
 
-    ProcessAndDenoisePointCloud(distanceMatrix, intensity_matrix, rows, cols, 
+    ProcessAndDenoisePointCloud(distanceMatrix, intensity_matrix, rows, cols,
+                                reconstructionStride, minValidDistance,
                                 dbscan_eps, dbscan_min_points,
                                 denoised_distance, denoised_intensity, duration_ms);
 
-    FillHolesDilate<float>(denoised_distance, denoised_distance, rows, cols, 5);
-    FillHolesDilate<uint16_t>(denoised_intensity, denoised_intensity, rows, cols, 5);
+    FillHolesDilate<float>(denoised_distance, denoised_distance, rows, cols, completionKernelSize);
+    FillHolesDilate<uint16_t>(denoised_intensity, denoised_intensity, rows, cols, completionKernelSize);
         
     delete[] time_matrix;
     delete[] intensity_matrix;
