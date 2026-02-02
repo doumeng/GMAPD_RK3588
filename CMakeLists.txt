@@ -1,5 +1,5 @@
-cmake_minimum_required( VERSION 3.0.0)
-set(PROJECT_NAME K253154)
+cmake_minimum_required(VERSION 3.0.0)
+set(PROJECT_NAME K253154_v2)
 
 project(${PROJECT_NAME})
 set(CMAKE_CXX_STANDARD 17)
@@ -19,8 +19,6 @@ find_package(OpenCV REQUIRED)
 
 # set(Open3D_DIR /opt/hisi-linux/x86-arm/aarch64-himix100-linux/target/usr/open3d/lib/cmake/open3d)
 find_package(Open3D REQUIRED)
-
-
 
 option(DEFAULT_LOG_LEVEL "default log level" INFO)
 

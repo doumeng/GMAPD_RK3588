@@ -1,14 +1,23 @@
+/*
+ * @Author: doumeng 1159898567@qq.com
+ * @Date: 2026-01-27 09:00:23
+ * @LastEditors: doumeng 1159898567@qq.com
+ * @LastEditTime: 2026-02-02 15:30:41
+ * @FilePath: /GMAPD_RK3588/main.cpp
+ * @Description: 程序入口，负责系统初始化及log系统初始化
+ */
 #include <iostream>
 #include <chrono>
 #include <thread>
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
-#include "log.h"
-#include "user_api.hpp"
 #include <fstream>
 #include <time.h>
+
 #include "task_reg.h"
+#include "log.h"
+#include "user_api.hpp"
 
 using namespace std;
 
@@ -22,7 +31,7 @@ int main()
     char timebuf[32];
     strftime(timebuf, sizeof(timebuf), "%Y%m%d_%H%M%S", t);
     std::string logFilePath = g_outputDir + "log_" + timebuf + ".txt";
-
+    
     // 先创建目录
     if (mkdir(g_outputDir.c_str(), 0777) == -1 && errno != EEXIST) {
         std::cerr << "Failed to create output directory" << std::endl;

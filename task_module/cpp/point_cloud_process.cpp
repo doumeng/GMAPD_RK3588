@@ -16,24 +16,23 @@
 using namespace open3d;
 using namespace std;
 
-// 从cv::Mat解析深度和强度到二维数组
+// Parse depth and intensity from cv::Mat to std::vectors
 void ParseDepthAndIntensity(
     const cv::Mat& src,
-    uint16_t* depth,
-    uint16_t* intensity)
+    std::vector<uint16_t>& depth,
+    std::vector<uint16_t>& intensity)
 {
     if (src.empty() || src.type() != CV_32SC1) {
         Logger::instance().error("Input Mat is empty or not CV_32SC1 in ParseDepthAndIntensity");
         return;
     }
 
-    if (!depth || !intensity) {
-        Logger::instance().error("Output pointers are null in ParseDepthAndIntensity");
-        throw std::invalid_argument("Output pointers cannot be null");
-    }
-
     const int rows = src.rows;
     const int cols = src.cols;
+    const int total_pixels = rows * cols;
+    
+    depth.resize(total_pixels);
+    intensity.resize(total_pixels);
 
     for (int i = 0; i < rows; ++i) {
         const int32_t* ptr = src.ptr<int32_t>(i);
@@ -46,43 +45,46 @@ void ParseDepthAndIntensity(
     }
 }
 
-// 根据飞行时间计算距离
-float* TimeToDistance(
-    uint16_t* matrix, 
+// Calculate distance from ToF matrix
+std::vector<float> TimeToDistance(
+    const std::vector<uint16_t>& matrix,
     int rows, int cols,
     int timeDelay)
 {
-    if (!matrix || rows <= 0 || cols <= 0) {
+    if (matrix.empty() || rows <= 0 || cols <= 0) {
         Logger::instance().error("Empty input matrix in TimeToDistance");
+        return {};
     }
 
     Logger::instance().debug(("Thread3 - " + std::to_string(timeDelay) + " ns delay").c_str());
 
-    float* result = createFloatMatrix(rows, cols);
+    std::vector<float> result(rows * cols);
 
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
-            // 测试验证
-            if (matrix[i * cols + j] < 50  || matrix[i * cols + j] > 7950) {
-                result[i * cols + j] = 0.0f; // 如果时间为0，距离也为0
+            int idx = i * cols + j;
+            // 50 ~ 7950 range check
+            if (matrix[idx] < 50  || matrix[idx] > 7950) {
+                result[idx] = 0.0f; // If time is INVALID, distance is 0
                 continue;
             }
 
-            float distance = (16000-2*matrix[i * cols + j]) * 0.15f + timeDelay * 0.15f;
-            result[i * cols + j] = distance;
+            float distance = (16000-2*matrix[idx]) * 0.15f + timeDelay * 0.15f;
+            result[idx] = distance;
         }
     }
 
     return result;
 }
 
-// 距离矩阵转点云
-void DistanceToPointcloud(float* distance_matrix, int rows, int cols, int stride, float minDistance, std::vector<Eigen::Vector3d> &points)
+// Distance matrix to Point Cloud
+void DistanceToPointcloud(const std::vector<float> &distance_matrix, int rows, int cols, int stride, float minDistance, std::vector<Eigen::Vector3d> &points)
 {
     Logger::instance().debug("Converting distance matrix to point cloud");
 
-    if (!distance_matrix || rows <= 0 || cols <= 0) {
+    if (distance_matrix.empty() || rows <= 0 || cols <= 0) {
         Logger::instance().error("Empty input matrix in DistanceToPointcloud");
+        return;
     }
 
     const int effectiveStride = std::max(1, stride);
@@ -118,17 +120,17 @@ shared_ptr<geometry::PointCloud> DenoiseWithDBSCAN(
     return denoised_cloud;
 }
 
-// 合并点云转换和降噪，返回降噪后的距离和强度矩阵
+// Combine conversion and denoising
 void ProcessAndDenoisePointCloud(
-    float* distance_matrix,
-    uint16_t* intensity_matrix,
+    const std::vector<float>& distance_matrix,
+    const std::vector<uint16_t>& intensity_matrix,
     int rows, int cols,
     int stride,
     float min_valid_distance,
     double eps,
     int min_points,
-    float* denoised_distance,
-    uint16_t* denoised_intensity,
+    std::vector<float>& denoised_distance,
+    std::vector<uint16_t>& denoised_intensity,
     long long &duration_ms)
 {
     auto start = std::chrono::high_resolution_clock::now();
@@ -136,22 +138,26 @@ void ProcessAndDenoisePointCloud(
     Logger::instance().debug(("ProcessAndDenoisePointCloud - stride: " + std::to_string(stride) +
                               ", min distance: " + std::to_string(min_valid_distance)).c_str());
 
-    // 仅使用距离信息转换点云
+    // Only use distance info for conversion
     std::vector<Eigen::Vector3d> points;
     DistanceToPointcloud(distance_matrix, rows, cols, stride, min_valid_distance, points);
 
-    // 创建点云对象
+    // Create point cloud object
     auto cloud = std::make_shared<geometry::PointCloud>();
     cloud->points_ = points;
 
     Logger::instance().debug(("point cloud size: " + std::to_string(cloud->points_.size())).c_str());
 
-    // 降噪处理
+    // Denoise
     auto denoised_cloud = DenoiseWithDBSCAN(cloud, eps, min_points);
 
     Logger::instance().debug(("Denoised point cloud size: " + std::to_string(denoised_cloud->points_.size())).c_str());
 
-    // 将降噪后的点云转换回矩阵形式，并过滤原始强度矩阵
+    // Ensure output vectors serve as matrix, initialized to 0
+    denoised_distance.assign(rows * cols, 0.0f);
+    denoised_intensity.assign(rows * cols, 0);
+
+    // Map back to matrix
     for (size_t i = 0; i < denoised_cloud->points_.size(); ++i) {
         const auto& point = denoised_cloud->points_[i];
         int x = static_cast<int>(point[0]);
@@ -168,40 +174,54 @@ void ProcessAndDenoisePointCloud(
     Logger::instance().debug(("Process And DenoisePointCloud completed in " + std::to_string(duration_ms) + " ms").c_str());
 }
 
-// 简单形态学膨胀填充深度图中的 0 值孔洞
+// Simple morphological dilation to fill holes
 template<typename T>
-void FillHolesDilate(const T* src, T* dst, int rows, int cols, int kernal_size)
+void FillHolesDilate(const std::vector<T>& src, std::vector<T>& dst, int rows, int cols, int kernal_size)
 {
-    cv::Mat src_mat(rows, cols, cv::DataType<T>::type, const_cast<T*>(src));
+    // Need to cast away const for cv::Mat because it doesn't take const ptr easily with external data normally, 
+    // but here we just need read access.
+    // However, we can copy data to Mat or use const_cast.
+    // Ideally use cv::Mat(rows, cols, type, void* data).
+    
+    cv::Mat src_mat(rows, cols, cv::DataType<T>::type, const_cast<T*>(src.data()));
     cv::Mat dilated;
 
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(kernal_size, kernal_size));
     
     cv::dilate(src_mat, dilated, kernel);
 
+    // Ensure dst is sized correctly
+    if (dst.size() != src.size()) {
+       dst.resize(src.size());
+    }
+
     const T* dilated_data = reinterpret_cast<const T*>(dilated.data);
     for (int i = 0; i < rows * cols; ++i) {
         if (src[i] == static_cast<T>(0)) {
             dst[i] = dilated_data[i];
-        } else if (src != dst) {
+        } else {
             dst[i] = src[i];
         }
     }
 }
 
-// 点云处理主函数
+// Helper to convert float vector to uint16 vector
+std::vector<uint16_t> Float2Uint16(const std::vector<float>& floatArray) {
+    std::vector<uint16_t> result(floatArray.size());
+    for (size_t i = 0; i < floatArray.size(); ++i) {
+        result[i] = static_cast<uint16_t>(floatArray[i]);
+    }
+    return result;
+}
+
+// Point Cloud Process Main Function
 void PointCloudProcess(
     int timedelay,
     const cv::Mat& pcieMat,
-    float * denoised_distance,
-    uint16_t * denoised_intensity)
+    std::vector<float>& denoised_distance,
+    std::vector<uint16_t>& denoised_intensity)
 {
     Logger::instance().debug("Starting point cloud processing from PCIE cv::Mat");
-    if (!denoised_distance || !denoised_intensity)
-    {
-        Logger::instance().error("Output pointers are null");
-        return;
-    }
 
     if (pcieMat.empty() || pcieMat.type() != CV_32SC1) {
         Logger::instance().error("Invalid or empty input cv::Mat for PointCloudProcess");
@@ -216,26 +236,27 @@ void PointCloudProcess(
         std::lock_guard<std::mutex> lock(g_imagingParamMutex);
         paramsSnapshot = g_imagingParams;
     }
+    
     const double dbscan_eps = paramsSnapshot.dbscanEps;
     const int dbscan_min_points = paramsSnapshot.dbscanMinSamples;
     const int reconstructionStride = paramsSnapshot.reconstructionStride;
     const float minValidDistance = paramsSnapshot.reconstructionThreshold;
     const int completionKernelSize = paramsSnapshot.completionKernelSize;
+
     Logger::instance().debug(("PointCloudProcess - eps: " + std::to_string(dbscan_eps) +
                               ", minPts: " + std::to_string(dbscan_min_points) +
                               ", stride: " + std::to_string(reconstructionStride) +
                               ", minDistance: " + std::to_string(minValidDistance) +
                               ", kernel: " + std::to_string(completionKernelSize)).c_str());
 
-    // 分配二维数组
-    uint16_t* time_matrix = createUint16Matrix(rows, cols);
-    uint16_t* intensity_matrix = createUint16Matrix(rows, cols);
+    // Use vectors instead of raw pointers
+    std::vector<uint16_t> time_matrix;
+    std::vector<uint16_t> intensity_matrix;
 
     ParseDepthAndIntensity(pcieMat, time_matrix, intensity_matrix);
 
-    float* distanceMatrix = TimeToDistance(time_matrix, rows, cols, timedelay);
+    std::vector<float> distanceMatrix = TimeToDistance(time_matrix, rows, cols, timedelay);
 
-    // 正常降噪
     long long duration_ms = 0;
 
     ProcessAndDenoisePointCloud(distanceMatrix, intensity_matrix, rows, cols,
@@ -246,10 +267,6 @@ void PointCloudProcess(
     FillHolesDilate<float>(denoised_distance, denoised_distance, rows, cols, completionKernelSize);
     FillHolesDilate<uint16_t>(denoised_intensity, denoised_intensity, rows, cols, completionKernelSize);
         
-    delete[] time_matrix;
-    delete[] intensity_matrix;
-    delete[] distanceMatrix;
-
     return;
 }
 

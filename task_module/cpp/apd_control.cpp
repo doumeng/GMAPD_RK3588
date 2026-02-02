@@ -52,7 +52,6 @@ int PcieChlCtrl(int chl)
 
 int EnDelayCtrl(int delay)
 {
-    // 延迟控制寄存器地址为0x1018，delay为延迟开门的计数值
     if (delay < 0)
     {
         return -1; // 无效延迟值
@@ -62,7 +61,6 @@ int EnDelayCtrl(int delay)
 
 int RecDelayCtrl(int delay)
 {
-    // 延迟控制寄存器地址为0x1018，delay为延迟开门的计数值
     if (delay < 0)
     {
         return -1; // 无效延迟值
