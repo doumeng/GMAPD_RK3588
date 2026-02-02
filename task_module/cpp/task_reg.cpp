@@ -28,10 +28,6 @@
 
 #include "imaging_manager.h"
 
-static bool udpsend = true;
-static float computedistance = 0.0f;
-static std::atomic<int> idx(0);
-
 // 全局变量定义
 SharedData g_sharedData;
 SharedMat g_sharedMat;
@@ -44,7 +40,6 @@ MotionData g_motionData;
 HistConfig g_histConfig;
 
 std::atomic<bool> g_stopThreads(false);
-std::string g_outputDir = "/userdata/data/"; // 输出目录
 
 // UDP 发送器实例
 std::string ip_address = "192.168.20.111";
@@ -205,27 +200,25 @@ void thread_UdpSend() {
         if (udpsend) {
             if (pkt.type == UdpPacketType::RAW_BYTES && !pkt.data.empty()) {
                 udp_Sender.sendData(pkt.data.data(), pkt.data.size());
-            }
-            else if (pkt.type == UdpPacketType::POINT_CLOUD_PROCESS) {
-                size_t pixel_count = pkt.rows * pkt.cols;
-                if (pkt.dist.size() == pixel_count && pkt.inten.size() == pixel_count && pkt.raw.size() == pixel_count) {
-                    uint32_t * data = interleaveArrays(pkt.dist.data(), pkt.inten.data(), pixel_count);
-
-                    size_t data_size = pixel_count * sizeof(uint32_t);
-                    size_t raw_data_size = pixel_count * sizeof(int32_t);
-                    size_t total_size = data_size + raw_data_size;
-
-                    std::vector<uint8_t> combined_data(total_size);
-                    std::memcpy(combined_data.data(), data, data_size);
-                    std::memcpy(combined_data.data() + data_size, pkt.raw.data(), raw_data_size);
-
-                    udp_Sender.sendData(combined_data.data(), total_size);
-
-                    delete[] data;
-                }
-            }
+            pkt.type == UdpPacketType::RAW_BYTES && !pkt.data.empty()) {
+            udp_Sender.sendData(pkt.data.data(), pkt.data.size());
         }
-    }
+        else if (pkt.type == UdpPacketType::POINT_CLOUD_PROCESS) {
+            size_t pixel_count = pkt.rows * pkt.cols;
+            if (pkt.dist.size() == pixel_count && pkt.inten.size() == pixel_count && pkt.raw.size() == pixel_count) {
+                uint32_t * data = interleaveArrays(pkt.dist.data(), pkt.inten.data(), pixel_count);
+
+                size_t data_size = pixel_count * sizeof(uint32_t);
+                size_t raw_data_size = pixel_count * sizeof(int32_t);
+                size_t total_size = data_size + raw_data_size;
+
+                std::vector<uint8_t> combined_data(total_size);
+                std::memcpy(combined_data.data(), data, data_size);
+                std::memcpy(combined_data.data() + data_size, pkt.raw.data(), raw_data_size);
+
+                udp_Sender.sendData(combined_data.data(), total_size);
+
+                delete[] data;
     Logger::instance().info("Thread UdpSend - Stopped");
 }
 
@@ -325,7 +318,6 @@ void thread_Communication()
                     }
                     else
                     {
-                        idx = 0;
                         Logger::instance().info("Thread_Communication - channel 0 enabled");
                     }
                 }
@@ -340,8 +332,7 @@ void thread_Communication()
                     else
                     {
                         idx = 0;
-                        Logger::instance().info("Thread_Communication - channel 1 enabled");
-                    }
+                        
                 }
 
                 // 设置触发方式
@@ -430,7 +421,7 @@ void thread_ComputeDistance()
 {
     constexpr auto kComputeInterval = std::chrono::milliseconds(100); // 模拟1秒读取一次
 
-    constexpr size_t kMaxTofFrameCount = 256;
+    constexpr size_t kMaxTofFrameCount = 200;
     u_char *src = new u_char[kMaxTofFrameCount * 16384 * 2];
 
     std::vector<uint16_t> memBuffer(128 * 128);
@@ -449,15 +440,8 @@ void thread_ComputeDistance()
 
         if (g_sysConfig.workMode == WorkMode::TEST)
         {
-            int tofFrameCount = 200;
-            {
-                std::lock_guard<std::mutex> lock(g_imagingParamMutex);
-                tofFrameCount = g_imagingParams.tofFrameCount;
-            }
-            tofFrameCount = std::clamp(tofFrameCount, 1, static_cast<int>(kMaxTofFrameCount));
-
             // 测试模式，工作在通道0，输出原始数据
-            int status = PcieRead(0, src, tofFrameCount);
+            int status = PcieRead(0, src, 200); // 读取200帧数据
 
             double dataFrequency = get_data_frequency(0);
 
@@ -469,7 +453,7 @@ void thread_ComputeDistance()
             else
             {
                 Logger::instance().debug(("Thread ComputeDistance - Successfully read raw data from PCIe, data length: " + std::to_string(status) +
-                                         ", frames: " + std::to_string(tofFrameCount)).c_str());
+                                         ", frames: " + std::to_string(200)).c_str());
                 Logger::instance().info(("Thread ComputeDistance - Tof data frequency: " + std::to_string(dataFrequency)).c_str());
 
                 {
@@ -513,7 +497,7 @@ void thread_ComputeDistance()
                 HistogramResult result = ComputeHistogram(MatToProcess, 1000, 50000);
                 computedistance = result.maxPixelValue / 10.0f;
 
-                {
+                float {
                     g_sharedData.distance = computedistance;
                     g_sharedData.occupancyRatio = result.occupancyRatio;
                     g_sharedData.dataUpdated = true;

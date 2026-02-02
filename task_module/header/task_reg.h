@@ -29,12 +29,12 @@ struct SharedMat
 
 struct ImagingAlgorithmParams
 {
-    int tofFrameCount = 64;
-    int reconstructionStride = 1;
-    float reconstructionThreshold = 120.0f;
+    int tofFrameCount = 4;
+    int reconstructionStride = 3;
+    int reconstructionThreshold = 2;
     double dbscanEps = 3.0;
     int dbscanMinSamples = 10;
-    int completionKernelSize = 5;
+    int completionKernelSize = 3;
 };
 
 extern ImagingAlgorithmParams g_imagingParams;

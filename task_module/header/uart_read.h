@@ -54,13 +54,6 @@ struct HistConfig
     int16_t threshold = 2;                            // 阈值
 };
 
-struct PostprocessConfig
-{
-    double eps = 5.0f;                                 // 邻域半径
-    int minSamples = 5;                                // 最小样本数
-    int kernalSize = 5;                                 // 高斯核大小
-};
-
 // 弹体数据
 struct MotionData
 {
