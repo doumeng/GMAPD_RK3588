@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 
+#include <cmath>
 #include "log.h"
 #include "compute_distance.h"
 #include "point_cloud_process.h"
@@ -145,6 +146,43 @@ void UpdateImagingParametersInterface()
     //                          ", stride: " + std::to_string(paramsFromLut.reconstructionStride) +
     //                          ", eps: " + std::to_string(paramsFromLut.dbscanEps) +
     //                          ", kernel: " + std::to_string(paramsFromLut.completionKernelSize)).c_str());
+}
+
+// 更新栅格搜索参数
+void GridSearchParameters(){
+    
+}
+
+
+// 线程：监听HistConfig变化并设置参数
+void thread_HistConfigMonitor() {
+    Logger::instance().info("Thread HistConfigMonitor - Starting");
+    while (!g_shutdown.load()) {
+        std::unique_lock<std::mutex> lock(g_histConfig.mtx);
+        g_histConfig.cv.wait(lock, [] { return g_histConfig.updated || g_shutdown.load(); });
+
+        if (g_shutdown.load()) {
+            break;
+        }
+
+        // 获取当前配置快照
+        int16_t currentStride = g_histConfig.stride;
+        int16_t currentThreshold = g_histConfig.threshold;
+        g_histConfig.updated = false;
+        
+        lock.unlock();
+
+        Logger::instance().info(("Thread HistConfigMonitor - Applying new params: Stride=" + 
+            std::to_string(currentStride) +  ", Threshold=" + 
+            std::to_string(currentThreshold)).c_str());
+
+        int strideStatus = StrideLengthCtrl(currentStride);
+        int threshStatus = DiffThreholdCtrl(currentThreshold);
+
+        if (strideStatus < 0) Logger::instance().error("Thread HistConfigMonitor - Failed to set StrideLength");
+        if (threshStatus < 0) Logger::instance().error("Thread HistConfigMonitor - Failed to set DiffThrehold");
+    }
+    Logger::instance().info("Thread HistConfigMonitor - Stopped");
 }
 
 // 线程：定时更新参数
@@ -306,6 +344,13 @@ void thread_Communication()
                 Logger::instance().info(("Thread_Communication - En Delay: " + std::to_string(g_sysConfig.enDelay)).c_str());
                 Logger::instance().info(("Thread_Communication - stride: " + std::to_string(g_histConfig.stride)).c_str());
                 Logger::instance().info(("Thread_Communication - threshold: " + std::to_string(g_histConfig.threshold)).c_str());
+
+                // 通知 Monitor 线程参数更新
+                {
+                    std::lock_guard<std::mutex> lock(g_histConfig.mtx);
+                    g_histConfig.updated = true;
+                }
+                g_histConfig.cv.notify_one();
                 
                 // 设置工作模式
                 if (g_sysConfig.workMode == WorkMode::TEST)
@@ -663,6 +708,9 @@ void register_threads()
     std::thread pcieSend(thread_PcieSend);
     pcieSend.detach();
     
+    std::thread histMonitor(thread_HistConfigMonitor);
+    histMonitor.detach();
+
     std::thread paramUpdate(thread_UpdateParams);
     paramUpdate.detach();
 

@@ -17,7 +17,7 @@ namespace
     {
         int tofFrameCount;
         int reconstructionStride;
-        float reconstructionThreshold;
+        int reconstructionThreshold;
         double dbscanEps;
         int dbscanMinSamples;
         int kernelSize;
@@ -27,7 +27,7 @@ namespace
     {
         int tofFrameDelta;
         int strideDelta;
-        float thresholdDelta;
+        int thresholdDelta;
         double epsDelta;
         int minSampleDelta;
         int kernelDelta;
@@ -142,22 +142,23 @@ namespace
         return populated > 0;
     }
 
+    // 距离主要影响重建帧数
     constexpr std::array<DistanceProfile, kDistanceBinCount> kDistanceProfiles = {{
-        {32, 1, 80.0f, 2.0, 8, 3},
-        {48, 1, 110.0f, 2.2, 10, 3},
-        {64, 2, 140.0f, 2.6, 12, 3},
-        {80, 2, 170.0f, 3.0, 14, 5},
-        {96, 2, 200.0f, 3.4, 16, 5},
-        {120, 3, 230.0f, 3.8, 18, 7},
-        {150, 3, 260.0f, 4.2, 20, 7},
+        {200, 3, 4, 3, 20, 3},
+        {200, 3, 3, 3, 10, 3},
+        {200, 3, 3, 3, 10, 3},
+        {300, 4, 2, 3, 10, 3},
+        {300, 4, 2, 3, 5, 3},
+        {300, 4, 1, 3, 5, 3},
+        {300, 4, 1, 3, 5, 3},
     }};
 
     constexpr std::array<SparsityProfile, kSparsityLevelCount> kSparsityProfiles = {{
-        {40, 1, 40.0f, 0.8, -2, 2},
-        {20, 1, 20.0f, 0.5, -1, 1},
-        {0, 0, 0.0f, 0.0, 0, 0},
-        {-10, 0, -15.0f, -0.2, 1, 0},
-        {-20, -1, -30.0f, -0.4, 2, -2},
+        {200, 1, 0, 0, 0, 0}, // 0.2
+        {200, 1, 0, 0, 0, 0}, // 0.4 
+        {100, 0, 0, 0, 0, 0}, // 0.6
+        {0, 0, 1, 0, 0, 0}, // 0.8
+        {0, 0, 1, 0, 0, 0},  // 1.0
     }};
 
     ImagingAlgorithmParams ComposeParams(const DistanceProfile &distanceProfile,

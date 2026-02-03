@@ -1,6 +1,7 @@
 #include "point_cloud_process.h"
 #include "compute_distance.h"
 #include "log.h"
+#include "apd_control.h"
 #include <string>
 #include <algorithm>
 #include <chrono>
@@ -78,7 +79,7 @@ std::vector<float> TimeToDistance(
 }
 
 // Distance matrix to Point Cloud
-void DistanceToPointcloud(const std::vector<float> &distance_matrix, int rows, int cols, int stride, float minDistance, std::vector<Eigen::Vector3d> &points)
+void DistanceToPointcloud(const std::vector<float> &distance_matrix, int rows, int cols, std::vector<Eigen::Vector3d> &points)
 {
     Logger::instance().debug("Converting distance matrix to point cloud");
 
@@ -87,14 +88,12 @@ void DistanceToPointcloud(const std::vector<float> &distance_matrix, int rows, i
         return;
     }
 
-    const int effectiveStride = std::max(1, stride);
-    const float minDistanceClamped = std::max(0.0f, minDistance);
-    points.reserve((rows / effectiveStride + 1) * (cols / effectiveStride + 1));
+    points.reserve(rows * cols);
 
-    for (int i = 0; i < rows; i += effectiveStride) {
-        for (int j = 0; j < cols; j += effectiveStride) {
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
             float distance = distance_matrix[i * cols + j];
-            if (distance > minDistanceClamped) {
+            if (distance > 0) {
                 points.emplace_back(Eigen::Vector3d(i, j, distance));
             }
         }
@@ -125,8 +124,6 @@ void ProcessAndDenoisePointCloud(
     const std::vector<float>& distance_matrix,
     const std::vector<uint16_t>& intensity_matrix,
     int rows, int cols,
-    int stride,
-    float min_valid_distance,
     double eps,
     int min_points,
     std::vector<float>& denoised_distance,
@@ -135,12 +132,10 @@ void ProcessAndDenoisePointCloud(
 {
     auto start = std::chrono::high_resolution_clock::now();
     Logger::instance().debug("Starting ProcessAndDenoisePointCloud");
-    Logger::instance().debug(("ProcessAndDenoisePointCloud - stride: " + std::to_string(stride) +
-                              ", min distance: " + std::to_string(min_valid_distance)).c_str());
 
     // Only use distance info for conversion
     std::vector<Eigen::Vector3d> points;
-    DistanceToPointcloud(distance_matrix, rows, cols, stride, min_valid_distance, points);
+    DistanceToPointcloud(distance_matrix, rows, cols, points);
 
     // Create point cloud object
     auto cloud = std::make_shared<geometry::PointCloud>();
@@ -174,15 +169,9 @@ void ProcessAndDenoisePointCloud(
     Logger::instance().debug(("Process And DenoisePointCloud completed in " + std::to_string(duration_ms) + " ms").c_str());
 }
 
-// Simple morphological dilation to fill holes
 template<typename T>
 void FillHolesDilate(const std::vector<T>& src, std::vector<T>& dst, int rows, int cols, int kernal_size)
 {
-    // Need to cast away const for cv::Mat because it doesn't take const ptr easily with external data normally, 
-    // but here we just need read access.
-    // However, we can copy data to Mat or use const_cast.
-    // Ideally use cv::Mat(rows, cols, type, void* data).
-    
     cv::Mat src_mat(rows, cols, cv::DataType<T>::type, const_cast<T*>(src.data()));
     cv::Mat dilated;
 
@@ -249,7 +238,6 @@ void PointCloudProcess(
                               ", minDistance: " + std::to_string(minValidDistance) +
                               ", kernel: " + std::to_string(completionKernelSize)).c_str());
 
-    // Use vectors instead of raw pointers
     std::vector<uint16_t> time_matrix;
     std::vector<uint16_t> intensity_matrix;
 
@@ -260,7 +248,6 @@ void PointCloudProcess(
     long long duration_ms = 0;
 
     ProcessAndDenoisePointCloud(distanceMatrix, intensity_matrix, rows, cols,
-                                reconstructionStride, minValidDistance,
                                 dbscan_eps, dbscan_min_points,
                                 denoised_distance, denoised_intensity, duration_ms);
 

@@ -50,6 +50,10 @@ struct SystemConfig
 
 struct HistConfig
 {
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool updated = false;
+
     int16_t stride = 8;                               // 系统配置
     int16_t threshold = 2;                            // 阈值
 };

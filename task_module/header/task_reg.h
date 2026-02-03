@@ -9,6 +9,7 @@
 #pragma once
 #include <shared_mutex>
 #include <mutex>
+#include <condition_variable>
 
 // 共享数据结构
 struct SharedData
