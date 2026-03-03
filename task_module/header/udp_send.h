@@ -29,7 +29,8 @@ constexpr size_t   UDP_FRAME_TOTAL_LEN = 4108; // 2+2+4+1+4096+1+2
 struct UdpFrame {
     uint16_t header;         // 0xAA55
     uint16_t ctrl;           // bit15: is_fragment, bit0-12: fragment length
-    uint32_t transfer_id;    // timestamp or unique id
+    uint8_t  transfer_id[3]; // Bytes 5-7 (offsets 4,5,6)
+    uint8_t  task_type;      // Byte 8 (offset 7)
     uint8_t  fragment_idx;   // fragment index (0-15)
     uint8_t  data[UDP_FRAME_DATA_LEN]; // payload
     uint8_t  checksum;       // XOR of all bytes from header to data
@@ -42,7 +43,7 @@ public:
     ~UdpSender();
 
     // 发送大数据，自动分片组帧
-    bool sendData(const uint8_t* data, size_t length);
+    bool sendData(const uint8_t* data, size_t length, uint32_t transfer_id, uint8_t task_type);
 
 private:
     int sockfd_;

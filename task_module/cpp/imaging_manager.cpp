@@ -83,8 +83,8 @@ namespace
         }
 
         params.tofFrameCount = std::clamp(params.tofFrameCount, 16, 256);
-        params.reconstructionStride = std::clamp(params.reconstructionStride, 1, 4);
-        params.reconstructionThreshold = std::clamp(params.reconstructionThreshold, 0.0f, 1000.0f);
+        params.reconstructionStride = std::clamp(params.reconstructionStride, 3,5);
+        params.reconstructionThreshold = std::clamp(params.reconstructionThreshold, 0, 10);
         params.dbscanEps = std::max(0.1, params.dbscanEps);
         params.dbscanMinSamples = std::clamp(params.dbscanMinSamples, 1, 128);
         if (params.completionKernelSize <= 0)
@@ -167,7 +167,7 @@ namespace
         ImagingAlgorithmParams params;
         params.tofFrameCount = std::clamp(distanceProfile.tofFrameCount + sparsityProfile.tofFrameDelta, 16, 256);
         params.reconstructionStride = std::clamp(distanceProfile.reconstructionStride + sparsityProfile.strideDelta, 1, 4);
-        params.reconstructionThreshold = std::clamp(distanceProfile.reconstructionThreshold + sparsityProfile.thresholdDelta, 50.0f, 400.0f);
+        params.reconstructionThreshold = std::clamp(distanceProfile.reconstructionThreshold + sparsityProfile.thresholdDelta, 0, 10);
         params.dbscanEps = std::max(0.5, distanceProfile.dbscanEps + sparsityProfile.epsDelta);
         params.dbscanMinSamples = std::clamp(distanceProfile.dbscanMinSamples + sparsityProfile.minSampleDelta, 3, 64);
         int kernel = std::clamp(distanceProfile.kernelSize + sparsityProfile.kernelDelta, 3, 9);

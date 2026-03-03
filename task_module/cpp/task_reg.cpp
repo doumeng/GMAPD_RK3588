@@ -129,23 +129,23 @@ void UpdateImagingParametersInterface()
     const size_t sparsityIdx = ResolveSparsityIndex(occupancyRatio);
 
     Logger::instance().info(("UpdateImagingParametersInterface - distanceIdx: " + std::to_string(distanceIdx) +
-                             ", sparsityIdx: " + std::to_string(sparsityIdx));
+                             ", sparsityIdx: " + std::to_string(sparsityIdx)).c_str());
 
-    // const ImagingAlgorithmParams paramsFromLut = ImagingParamLut()[distanceIdx][sparsityIdx];
+    const ImagingAlgorithmParams paramsFromLut = ImagingParamLut()[distanceIdx][sparsityIdx];
 
-    // {
-    //     std::lock_guard<std::mutex> lock(g_imagingParamMutex);
-    //     g_imagingParams = paramsFromLut;
-    // }
+    {
+        std::lock_guard<std::mutex> lock(g_imagingParamMutex);
+        g_imagingParams = paramsFromLut;
+    }
 
-    // g_sharedData.dataUpdated = false;
+    g_sharedData.dataUpdated = false;
 
-    // Logger::instance().info(("UpdateImagingParametersInterface - distanceIdx: " + std::to_string(distanceIdx) +
-    //                          ", sparsityIdx: " + std::to_string(sparsityIdx) +
-    //                          ", frames: " + std::to_string(paramsFromLut.tofFrameCount) +
-    //                          ", stride: " + std::to_string(paramsFromLut.reconstructionStride) +
-    //                          ", eps: " + std::to_string(paramsFromLut.dbscanEps) +
-    //                          ", kernel: " + std::to_string(paramsFromLut.completionKernelSize)).c_str());
+    Logger::instance().info(("UpdateImagingParametersInterface - distanceIdx: " + std::to_string(distanceIdx) +
+                             ", sparsityIdx: " + std::to_string(sparsityIdx) +
+                             ", frames: " + std::to_string(paramsFromLut.tofFrameCount) +
+                             ", stride: " + std::to_string(paramsFromLut.reconstructionStride) +
+                             ", eps: " + std::to_string(paramsFromLut.dbscanEps) +
+                             ", kernel: " + std::to_string(paramsFromLut.completionKernelSize)).c_str());
 }
 
 // 更新栅格搜索参数
@@ -204,6 +204,8 @@ void thread_UpdateParams() {
 // 线程：UDP单独发送
 void thread_UdpSend() {
     Logger::instance().info("Thread UdpSend - Starting");
+    static uint32_t task_id = 0;
+
     while (!g_shutdown.load()) {
         wait_until_running();
         if (g_shutdown.load()) {
@@ -235,11 +237,10 @@ void thread_UdpSend() {
         }
         lock.unlock();
 
-        if (udpsend) {
-            if (pkt.type == UdpPacketType::RAW_BYTES && !pkt.data.empty()) {
-                udp_Sender.sendData(pkt.data.data(), pkt.data.size());
-            pkt.type == UdpPacketType::RAW_BYTES && !pkt.data.empty()) {
-            udp_Sender.sendData(pkt.data.data(), pkt.data.size());
+        task_id = (task_id + 1) % 0xFFFFFF;
+
+        if (pkt.type == UdpPacketType::RAW_BYTES && !pkt.data.empty()) {
+            udp_Sender.sendData(pkt.data.data(), pkt.data.size(), task_id, 1);
         }
         else if (pkt.type == UdpPacketType::POINT_CLOUD_PROCESS) {
             size_t pixel_count = pkt.rows * pkt.cols;
@@ -254,9 +255,12 @@ void thread_UdpSend() {
                 std::memcpy(combined_data.data(), data, data_size);
                 std::memcpy(combined_data.data() + data_size, pkt.raw.data(), raw_data_size);
 
-                udp_Sender.sendData(combined_data.data(), total_size);
-
+                // udp_Sender.sendData(combined_data.data(), total_size, task_id, 0);
+                udp_Sender.sendData(reinterpret_cast<uint8_t*>(data), data_size, task_id, 0);
                 delete[] data;
+            }
+        }
+    }
     Logger::instance().info("Thread UdpSend - Stopped");
 }
 
@@ -376,8 +380,8 @@ void thread_Communication()
                     }
                     else
                     {
-                        idx = 0;
-                        
+                        Logger::instance().info("Thread_Communication - channel 1 enabled");
+                    }
                 }
 
                 // 设置触发方式
@@ -445,7 +449,7 @@ void thread_Communication()
             else if (cmdType == UartCmdType::APD_STOP) // 下电指令
             {
                 ApdGatherEn(0); // 停时序
-                g_shutdown = true;
+                // g_shutdown = true;
                 stop_threads();
                 Logger::instance().info("Thread_Communication - APD Stop command received, and stop apd time squence.");
                 break;
@@ -464,7 +468,7 @@ void thread_Communication()
 // 线程: tof输出及距离计算
 void thread_ComputeDistance()
 {
-    constexpr auto kComputeInterval = std::chrono::milliseconds(100); // 模拟1秒读取一次
+    constexpr auto kComputeInterval = std::chrono::milliseconds(20); // 模拟1秒读取一次
 
     constexpr size_t kMaxTofFrameCount = 200;
     u_char *src = new u_char[kMaxTofFrameCount * 16384 * 2];
@@ -502,11 +506,16 @@ void thread_ComputeDistance()
                 Logger::instance().info(("Thread ComputeDistance - Tof data frequency: " + std::to_string(dataFrequency)).c_str());
 
                 {
+                    // UdpDataPacket pkt;
+                    // size_t dataLen = 2 * 2 * 16384 * sizeof(unsigned char);
+                    // pkt.data.resize(dataLen);
+                    
                     UdpDataPacket pkt;
-                    size_t dataLen = 4 * 2 * 16384 * sizeof(unsigned char);
+                    size_t dataLen = 2 * 2 * 16384 * sizeof(unsigned char);
                     pkt.data.resize(dataLen);
+                    pkt.type = UdpPacketType::RAW_BYTES;
 
-                    memcpy(pkt.data.data(), src + 2 * 80 * 16384 * sizeof(unsigned char), dataLen);
+                    memcpy(pkt.data.data(), src + 2 * 16384 * sizeof(unsigned char), dataLen);
 
                     {
                         std::lock_guard<std::mutex> lock(g_udpMutex);
@@ -540,9 +549,9 @@ void thread_ComputeDistance()
             {
                 // 计算直方图并获取结果
                 HistogramResult result = ComputeHistogram(MatToProcess, 1000, 50000);
-                computedistance = result.maxPixelValue / 10.0f;
+                float computedistance = result.maxPixelValue / 10.0f;
 
-                float {
+                {
                     g_sharedData.distance = computedistance;
                     g_sharedData.occupancyRatio = result.occupancyRatio;
                     g_sharedData.dataUpdated = true;

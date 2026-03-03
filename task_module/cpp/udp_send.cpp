@@ -78,7 +78,7 @@ bool UdpSender::sendFrame(const UdpFrame& frame) {
     return true;
 }
 
-bool UdpSender::sendData(const uint8_t* data, size_t length) {
+bool UdpSender::sendData(const uint8_t* data, size_t length, uint32_t transfer_id, uint8_t task_type) {
     if (!data || length == 0) {
         Logger::instance().debug("sendData called with empty data or zero length");
         return false;
@@ -94,12 +94,19 @@ bool UdpSender::sendData(const uint8_t* data, size_t length) {
     const size_t fragment_size = UDP_FRAME_DATA_LEN;
 
     size_t total_fragments = (length + fragment_size - 1) / fragment_size;
+
+    Logger::instance().debug((
+        "UdpSender::sendData len=" + std::to_string(length) +
+        ", fragment_size=" + std::to_string(fragment_size) +
+        ", total_fragments=" + std::to_string(total_fragments) +
+        ", transfer_id=" + std::to_string(transfer_id) +
+        ", task_type=" + std::to_string(static_cast<int>(task_type))
+    ).c_str());
+
     if (total_fragments > max_fragments) {
         Logger::instance().debug("Data too large, only sending first 8 fragments");
         total_fragments = max_fragments; // 最多128片
     }
-
-    uint32_t transfer_id = getTimestamp();
 
     for (size_t idx = 0; idx < total_fragments; ++idx) {
         UdpFrame frame;
@@ -113,7 +120,13 @@ bool UdpSender::sendData(const uint8_t* data, size_t length) {
         if (total_fragments > 1) frame.ctrl |= (1 << 15); // is_fragment
         frame.ctrl |= (frag_len & 0x1FFF); // 13 bits for length
 
-        frame.transfer_id = transfer_id;
+        // Set transfer_id (3 bytes) and task_type (1 byte)
+        // Matches Python: struct.pack('>I', transfer_id)[1:4] => Big Endian, lower 3 bytes
+        frame.transfer_id[0] = (transfer_id >> 16) & 0xFF;
+        frame.transfer_id[1] = (transfer_id >> 8) & 0xFF;
+        frame.transfer_id[2] = (transfer_id >> 0) & 0xFF;
+        frame.task_type = task_type;
+        
         frame.fragment_idx = static_cast<uint8_t>(idx);
 
         memset(frame.data, 0, fragment_size);

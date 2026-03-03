@@ -1,7 +1,15 @@
+/*
+ * @Author: doumeng 1159898567@qq.com
+ * @Date: 2026-01-27 09:00:23
+ * @LastEditors: doumeng 1159898567@qq.com
+ * @LastEditTime: 2026-03-02 14:44:57
+ * @FilePath: /GMAPD_RK3588/task_module/header/log.h
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 #pragma once
 
 #ifndef DEFAULT_LOG_LEVEL
-#define DEFAULT_LOG_LEVEL INFO
+#define DEFAULT_LOG_LEVEL DEBUG
 #endif
 
 #include <fstream>

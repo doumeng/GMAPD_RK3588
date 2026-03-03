@@ -1,8 +1,8 @@
 /*
  * @Author: doumeng
  * @Date: 2025-05-30 19:52:42
- * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2026-01-27 13:01:13
+ * @LastEditors: doumeng 1159898567@qq.com
+ * @LastEditTime: 2026-02-04 17:30:54
  * @FilePath: uart_read.h
  * @Description: 读取串口信息并解析至对应的结构体
 */
@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "log.h"
+#include <condition_variable>
 
 // 工作模式枚举
 enum class WorkMode
